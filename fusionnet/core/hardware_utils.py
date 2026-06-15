@@ -7,6 +7,8 @@ def detect_hardware():
     Returns a configuration dict with device, batch_size, and lora_rank.
     """
     config = {}
+    print(f"PyTorch Version: {torch.__version__}")
+    print(f"CUDA Available: {torch.cuda.is_available()}")
 
     if torch.cuda.is_available():
         config['device'] = 'cuda'
@@ -40,3 +42,4 @@ def detect_hardware():
         print(f"Warning: No GPU detected. Falling back to CPU with {sys_ram_gb:.1f}GB RAM. Training will be slow.")
 
     return config
+detect_hardware()

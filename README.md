@@ -202,6 +202,12 @@ Memory savings vs full fine-tuning:
 
 **Adaptive pruning:** Devices with < 8GB available VRAM receive a pruned model (40% sparsity) to participate without OOM errors.
 
+**Model Distribution Strategy:**
+*   **The Base Model:** Every node holds the exact same foundation model (e.g., Llama 3-8B). To ensure it fits on smaller hardware, it is heavily compressed (4-bit quantized).
+*   **LoRA Adapters:** The devices do not train the massive base model. They only train a small "plugin" weight called a LoRA adapter. The size (Rank) of this adapter scales with the hardware—a cloud server trains a massive Rank 64 adapter, while a weak CPU-only laptop trains a tiny Rank 2 adapter.
+*   **Central Aggregation:** The central server does not run a "bigger" model. It simply collects the LoRA adapters from all edge devices, mathematically averages them together (FedAvg), and broadcasts the smarter, combined adapter back to the network.
+
+
 ### 4.5 Zero-Knowledge Proof for Update Verification
 
 Purpose: Prove that a device's gradient update satisfies the clipping norm constraint **without revealing the actual gradients.**
