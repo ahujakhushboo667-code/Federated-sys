@@ -112,9 +112,9 @@ Enterprises sitting on **mountains of sensitive data** cannot leverage modern LL
 
 | Component | Technology | AMD Optimization |
 |-----------|------------|-----------------|
-| **Edge Inference** | Llama 3-8B, 4-bit GPTQ | MIGraphX quantized kernels |
-| **Local Fine-tuning** | LoRA (rank 8-16) | ROCm + HIP kernels |
-| **Privacy Engine** | DP-SGD (ε=1.0, δ=1e-5) | Custom HIP noise kernel |
+| **Edge Inference** | Llama 3-8B, 4-bit nf4 | HuggingFace bitsandbytes on ROCm |
+| **Local Fine-tuning** | LoRA (rank 4-16) | ROCm + PyTorch native |
+| **Privacy Engine** | DP-SGD (ε=1.0, δ=1e-5) | Opacus PrivacyEngine |
 | **Secure Aggregation** | MPC (SPDZ protocol) | RCCL for cross-device comms |
 | **Update Verification** | Zero-Knowledge Proofs | — |
 | **Global Coordination** | FedAvg + momentum | AMD MI300X (100+ nodes) |
@@ -178,17 +178,22 @@ Where:
 sensitivity = C (gradient clipping norm, e.g., C=1.0)
 ```
 
-### 4.3 LoRA on 4-bit Quantized Models
+### 4.3 AFLoRA (Adaptive Federated LoRA) on 4-bit Quantized Models
 
 ```
 Original weight matrix: W ∈ R^(d×k)  [frozen, 4-bit quantized]
-LoRA decomposition:     ΔW = B × A
-  Where A ∈ R^(r×k), B ∈ R^(d×r), rank r << min(d,k)
+AFLoRA decomposition:   ΔW = A × Λ × B
+  Where:
+    A ∈ R^(d×r) = Global shared matrix (participates in federation)
+    Λ ∈ R^(r)   = Local trainable diagonal importance matrix
+    B ∈ R^(r×k) = Local trainable matrix (remains on device)
 
 Memory savings vs full fine-tuning:
   Llama 3-8B full FT:  ~32GB VRAM (BF16)
-  4-bit + LoRA (r=8):  ~5GB VRAM ← feasible on Steam Deck
+  4-bit + AFLoRA (r=8):  ~5GB VRAM ← feasible on Steam Deck
 ```
+
+**Personalization Guarantee:** Since `B` and `Λ` never leave the device, the model inherently personalizes to local data distribution while still benefiting from the globally aggregated `A` matrix. Base64 encoding is used to efficiently serialize `A` matrices for transmission.
 
 ### 4.4 Heterogeneous Device Handling
 
@@ -245,32 +250,24 @@ Verification time: ~2ms per update on coordinator
 └──────────────────────────────────────────────┘
 ```
 
-### 5.2 Custom HIP Kernel: DP-SGD Noise Addition
+### 5.2 Privacy Engine: Opacus Integration & Fallback
 
-```cpp
-// HIP kernel for constant-time Gaussian noise addition
-__global__ void dp_sgd_noise_kernel(
-    float* gradients,
-    float* noise_buffer,
-    float sigma,            // calibrated noise std dev
-    float clip_norm,        // gradient clipping bound C
-    int num_elements
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_elements) return;
-    
-    // Clip gradient (constant-time, no branching)
-    float g = gradients[idx];
-    float norm = /* pre-computed L2 norm */;
-    float scale = fminf(1.0f, clip_norm / (norm + 1e-8f));
-    g *= scale;
-    
-    // Add Gaussian noise N(0, σ²)
-    g += sigma * noise_buffer[idx];   // noise_buffer pre-filled by cuRAND-equivalent
-    
-    gradients[idx] = g;
-}
+Instead of solely relying on custom kernels, FusionNet primarily integrates **Opacus**, a production-ready Differential Privacy library for PyTorch. However, since Opacus can sometimes struggle with dynamically quantized modules (like `bitsandbytes.nn.Linear4bit`), FusionNet implements an identical-interface fallback.
+
+```python
+# Setup DP-SGD with abstract PrivacyEngine
+from federation.privacy import setup_privacy
+
+model, optimizer, dataloader, privacy_engine = setup_privacy(
+    model, optimizer, dataloader, config["privacy"]
+)
+
+# During training loop
+if privacy_engine:
+    privacy_engine.step()  # Handles gradient clipping and Gaussian noise addition
+    optimizer.zero_grad()
 ```
+This dual-approach ensures mathematically sound per-sample gradient clipping and noise addition, guaranteeing Differential Privacy (DP-SGD) while remaining fully compatible with ROCm backends and 4-bit quantized base models.
 
 ### 5.3 RCCL for Cross-Device Aggregation
 
@@ -290,23 +287,26 @@ dist.all_reduce(gradient_tensor, op=dist.ReduceOp.SUM)
 gradient_tensor /= num_devices
 ```
 
-### 5.4 MIGraphX for Quantized Inference
+### 5.4 bitsandbytes for Quantized Inference
+
+For 4-bit model loading, FusionNet uses standard `transformers` integrated with `bitsandbytes`, which now natively supports ROCm 6.0:
 
 ```python
-import migraphx
+from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+import torch
 
-# Parse ONNX model
-model = migraphx.parse_onnx("llama3_8b_4bit.onnx")
-
-# Compile for AMD GPU with fp8/int4 support
-model.compile(
-    migraphx.get_target("gpu"),
-    offload_copy=True,
-    fast_math=True
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_use_double_quant=True,
 )
 
-# Run inference
-result = model.run({"input_ids": input_tensor})
+model = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    quantization_config=quantization_config,
+    device_map="auto",
+)
 ```
 
 ---
@@ -610,34 +610,36 @@ Day 14 ✅
 
 ---
 
-## 📁 Suggested Repository Structure
+## 📁 FusionNet Repository Structure
+
+The local client proof-of-concept has been successfully implemented in the `fusionnet-client/` directory.
 
 ```
 fusionnet/
 ├── README.md
 ├── docs/
-│   ├── architecture.md
-│   ├── privacy_proof.md
-│   └── amd_integration.md
-├── fusionnet/
-│   ├── core/
-│   │   ├── fl_coordinator.py      # FedAvg orchestration
-│   │   ├── dp_sgd.py              # Differential privacy engine
-│   │   ├── lora_trainer.py        # LoRA fine-tuning loop
-│   │   └── aggregator.py          # Secure aggregation
-│   ├── kernels/
-│   │   └── dp_noise.hip           # Custom HIP kernel
+├── fusionnet-client/              # ⬅️ Local Client PoC Component
+│   ├── README.md
+│   ├── main.py                    # Node CLI entry point
+│   ├── client.py                  # Standalone client module
+│   ├── config.yaml                # Device & training config
+│   ├── requirements.txt
 │   ├── models/
-│   │   └── llama_loader.py        # 4-bit quantized model loading
-│   └── comms/
-│       └── rccl_backend.py        # RCCL communication layer
-├── experiments/
-│   ├── mvp_sentiment/             # MVP demo scripts
-│   └── benchmarks/                # Convergence plots, latency tests
-├── scripts/
-│   ├── setup_rocm.sh
-│   └── launch_fl_round.sh
-└── requirements.txt
+│   │   └── loader.py              # 4-bit Llama + Hardware detection
+│   ├── aflora/
+│   │   ├── layer.py               # AFLoRA (A x Λ x B) module
+│   │   └── injection.py           # Target module replacer
+│   ├── federation/
+│   │   ├── client.py              # Base64 Comms & State management
+│   │   └── privacy.py             # Abstract DP Engine
+│   ├── training/
+│   │   └── engine.py              # Local training loop
+│   ├── datasets/
+│   │   └── loader.py              # HuggingFace Datasets interface
+│   └── scripts/
+│       ├── example_train.py
+│       └── example_federated_round.py
+└── scripts/
 ```
 
 ---

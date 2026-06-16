@@ -1,9 +1,13 @@
---extra-index-url https://download.pytorch.org/whl/rocm6.0
-torch
-migraphx
-peft
-transformers
-accelerate
-numpy
-tqdm
-psutil
+# PyTorch cu128 for NVIDIA Blackwell / Ada / Ampere GPUs (RTX 50xx, 40xx, 30xx).
+# Install via setup_cuda.sh or manually:
+#   pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 torchaudio==2.11.0+cu128 \
+#       --index-url https://download.pytorch.org/whl/cu128
+#
+# For AMD ROCm, use setup_rocm.sh instead.
+
+peft==0.11.1
+transformers==4.41.2
+accelerate==0.30.1
+numpy==1.26.4
+tqdm==4.66.4
+psutil==5.9.8

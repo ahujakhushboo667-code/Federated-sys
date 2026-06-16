@@ -1,0 +1,36 @@
+model:
+  name: "meta-llama/Meta-Llama-3-8B"
+  quantization_type: "nf4"
+
+federation:
+  lora_rank: 8 # Will be overridden by device profile auto-detection
+  learning_rate: 0.0001
+  local_epochs: 1
+  batch_size: 4
+  aggregation_frequency: 1 # Epochs before syncing
+  target_modules: ["q_proj", "v_proj"] # Configurable injection scope
+
+dataset:
+  name: "banking77" # Default PoC dataset
+  text_column: "text"
+  label_column: "label"
+
+privacy:
+  use_dp_sgd: true
+  epsilon: 1.0
+  delta: 0.00001
+  max_grad_norm: 1.0
+
+device_profiles:
+  MI300X:
+    rank: 64
+    batch_size: 32
+  RX_7900_XTX:
+    rank: 32
+    batch_size: 16
+  Steam_Deck:
+    rank: 8
+    batch_size: 4
+  CPU_only:
+    rank: 4
+    batch_size: 2
