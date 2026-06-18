@@ -693,6 +693,16 @@ During development and live testing, several issues were identified and resolved
    - Disabled Hugging Face datasets caching using `hf_datasets.disable_caching()` before running dataset mapping. This prevents a `FileExistsError` race condition when multiple local clients process datasets simultaneously on Windows.
 5. **Causal Language Model Target Labels Shape Mismatch (`fusionnet-client/training/engine.py`)**:
    - Explicitly cloned input IDs to initialize target labels (`batch['labels'] = batch['input_ids'].clone()`), fixing shape mismatches during local fine-tuning on classification tasks like Banking77.
+6. **DP-SGD Gradient Accumulation (`fusionnet-client/training/engine.py`)**:
+   - Fixed the optimizer step logic for Opacus to ensure privacy guarantees are enforced and gradients are properly clipped.
+7. **Database Resiliency & Foreign Keys (`backend/database.py`, `backend/models/`)**:
+   - Added connection pooling, retry logic, and foreign key constraints to maintain data integrity and prevent single points of failure.
+8. **Auth Middleware Improvements (`backend/middleware/auth.py`)**:
+   - Added an expiring token cache (`cachetools.TTLCache`) and robust error handling to prevent memory leaks and handle unauthenticated failures gracefully.
+9. **Global Exception Handling (`backend/main.py`)**:
+   - Implemented a global exception handler to prevent the backend API from crashing on unhandled errors.
+10. **Dynamic Repository Configuration (`fusionnet-client/config.yaml`, `scripts/hf_coordinator.py`)**:
+   - Replaced hardcoded Hugging Face repository IDs with environment variables to improve security and deployment flexibility.
 
 ---
 

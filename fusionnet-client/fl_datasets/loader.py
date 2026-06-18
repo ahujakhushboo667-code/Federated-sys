@@ -29,21 +29,23 @@ def get_dataset(config, tokenizer, device_tier: str = "CPU_only", client_id: int
     text_column  = config.get("text_column", "text")
     label_column = config.get("label_column", "label")
 
-    # Disable HF caching so parallel clients don't race on the same temp files (Windows)
-    hf_datasets.disable_caching()
+    # Set per-client cache directory to avoid race conditions
+    cache_dir = f".cache/client_{client_id}"
+    import os
+    os.makedirs(cache_dir, exist_ok=True)
 
-    print(f"Loading dataset: {dataset_name}")
+    print(f"Loading dataset: {dataset_name} into {cache_dir}")
     if dataset_name == "banking77":
-        raw_dataset = load_dataset("banking77")
+        raw_dataset = load_dataset("banking77", cache_dir=cache_dir)
     elif dataset_name == "sst2":
-        raw_dataset = load_dataset("glue", "sst2")
+        raw_dataset = load_dataset("glue", "sst2", cache_dir=cache_dir)
         text_column = "sentence"
     elif dataset_name == "imdb":
-        raw_dataset = load_dataset("imdb")
+        raw_dataset = load_dataset("imdb", cache_dir=cache_dir)
     elif dataset_name == "ag_news":
-        raw_dataset = load_dataset("ag_news")
+        raw_dataset = load_dataset("ag_news", cache_dir=cache_dir)
     else:
-        raw_dataset = load_dataset(dataset_name)
+        raw_dataset = load_dataset(dataset_name, cache_dir=cache_dir)
 
     def tokenize_function(examples):
         return tokenizer(

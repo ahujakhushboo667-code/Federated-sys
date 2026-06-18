@@ -2,6 +2,7 @@ from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from huggingface_hub import HfApi
 import logging
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +10,8 @@ class HFAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, bypass_paths=None):
         super().__init__(app)
         self.bypass_paths = bypass_paths or ["/docs", "/openapi.json", "/ws", "/api/dashboard/kpi"]
-        self._token_cache = {}
+        # Max 1000 tokens, expire after 1 hour (3600 seconds)
+        self._token_cache = TTLCache(maxsize=1000, ttl=3600)
 
     async def dispatch(self, request: Request, call_next):
         if any(request.url.path.startswith(path) for path in self.bypass_paths):
@@ -34,5 +36,9 @@ class HFAuthMiddleware(BaseHTTPMiddleware):
                 raise HTTPException(status_code=401, detail="Invalid token")
 
         request.state.user = self._token_cache[token]
-        response = await call_next(request)
-        return response
+        try:
+            response = await call_next(request)
+            return response
+        except Exception as e:
+            logger.error(f"Error processing request: {e}")
+            raise

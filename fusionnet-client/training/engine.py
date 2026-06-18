@@ -29,8 +29,8 @@ def train_local_epoch(model, dataloader, optimizer, device, config, privacy_engi
                 privacy_engine.step()
                 optimizer.zero_grad()
             else:
-                # Opacus: step then zero_grad (Opacus manages its own grad hooks)
-                optimizer.step()
+                # Fix DP-SGD accumulation bug for Opacus
+                privacy_engine.step()
                 optimizer.zero_grad()
         else:
             optimizer.step()

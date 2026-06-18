@@ -103,13 +103,15 @@ The privacy budget is tracked per round using the Opacus RDP accountant. If Opac
 ## Q9: How does your coordinator work without a dedicated server?
 
 **Answer:**
-FusionNet uses a private Hugging Face Dataset repository (`yash-goswami/fusionnet-coordinator`) as a zero-infrastructure parameter server. Clients push their local `A` matrix updates as `.pt` files to `round_N/client_K.pt`. The coordinator script polls `list_repo_files()` until all expected clients have uploaded, downloads them, runs FedAvg, and pushes the averaged result to `global/Global_A_round_N.pt`. Clients then pull that file at the start of the next round.
+FusionNet uses a private Hugging Face Dataset repository (configurable via the `HF_REPO_ID` environment variable) as a zero-infrastructure parameter server. Clients push their local `A` matrix updates as `.pt` files to `round_N/client_K.pt`. The coordinator script polls `list_repo_files()` until all expected clients have uploaded, downloads them, runs FedAvg, and pushes the averaged result to `global/Global_A_round_N.pt`. Clients then pull that file at the start of the next round.
 
-This means the entire federation runs with no cloud VM, no open port, and no custom API — just Python scripts and a private HF repo. It's fully auditable (every round's updates are versioned on the Hub) and costs nothing to operate beyond HF's free tier storage.
+This means the entire federation runs with no cloud VM for parameters, no open port, and no custom API — just Python scripts and a private HF repo. It's fully auditable (every round's updates are versioned on the Hub) and costs nothing to operate beyond HF's free tier storage.
 
 ---
 
 ## Q10: How do you authenticate clients to the parameter server?
 
 **Answer:**
-Each node loads a `HF_TOKEN` from a local `.env` file (gitignored, never committed). The token is passed directly to `HfApi(token=...)` in `federation/hf_hub.py`. Since the HF dataset repo is private, only tokens with read/write access to `yash-goswami/fusionnet-coordinator` can push or pull updates. In production, each client would have a scoped write token granting access only to their own `round_N/client_K.pt` path.
+Each node loads a `HF_TOKEN` from a local `.env` file (gitignored, never committed). The token is passed directly to `HfApi(token=...)` in `federation/hf_hub.py`. Since the HF dataset repo is private, only tokens with read/write access to the configured repository can push or pull updates. In production, each client would have a scoped write token granting access only to their own `round_N/client_K.pt` path.
+
+For telemetry reporting, the FastAPI backend employs an authentication middleware that validates the `HF_TOKEN` against the Hugging Face API. It uses a Time-to-Live (TTL) cache to minimize API calls and prevent token cache memory leaks, ensuring a secure and performant telemetry layer.
