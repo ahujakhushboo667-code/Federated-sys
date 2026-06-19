@@ -40,6 +40,39 @@ For the MVP, the "network" can be simulated locally with Python objects and
 files. The protocol should still look like a real distributed system so the
 transport can be swapped later.
 
+## Current Network Topology
+
+Current MVP topology:
+
+```text
+simulated edge clients
+  -> LocalCommunicationBackend
+  -> FedAvg coordinator logic
+  -> HttpEventSink
+  -> FastAPI backend
+  -> REST/WebSocket data for dashboard
+```
+
+In this mode, all clients run inside one Python process, but the messages are
+shaped like real VM-to-coordinator communication.
+
+Target topology:
+
+```text
+edge VMs
+  -> upload/download model updates through HF Hub or another weight transport
+  -> report round status, metrics, and events to FastAPI
+  -> frontend reads FastAPI REST endpoints and WebSocket events
+```
+
+The important split is:
+
+```text
+weights move through the comms/coordinator path.
+status and metrics move through the backend telemetry path.
+frontend only reads backend APIs.
+```
+
 ## MVP Transport: Local Network Simulation
 
 The first version runs from one command:
