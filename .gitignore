@@ -84,6 +84,8 @@ datasets/
 outputs/
 checkpoints/
 logs/
+experiments/mvp_sentiment/results/
+*.db
 
 # OS generated files
 .DS_Store

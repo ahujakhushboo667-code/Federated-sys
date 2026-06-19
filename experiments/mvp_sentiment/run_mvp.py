@@ -8,8 +8,7 @@ FedAvg aggregates the updates, and round metrics are saved for plotting.
 from __future__ import annotations
 
 import argparse
-import json
-import pickle
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -28,10 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-if torch is not None:
-    from fusionnet.core.aggregator import fed_avg as torch_fed_avg
-else:
-    torch_fed_avg = None
+from fusionnet.comms import ClientUpdate, HttpEventSink, LocalCommunicationBackend
 
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -45,26 +41,6 @@ class ClientProfile:
     num_samples: int
     learning_rate: float
     noise_scale: float
-
-
-@dataclass
-class ClientUpdate:
-    client_id: str
-    round_num: int
-    num_samples: int
-    hardware_tier: str
-    weights: dict[str, Any]
-    metrics: dict[str, float]
-
-    def to_artifact(self) -> dict[str, Any]:
-        return {
-            "client_id": self.client_id,
-            "round": self.round_num,
-            "num_samples": self.num_samples,
-            "hardware_tier": self.hardware_tier,
-            "weights": {key: to_cpu(value) for key, value in self.weights.items()},
-            "metrics": self.metrics,
-        }
 
 
 class LocalClient:
@@ -107,15 +83,18 @@ class LocalClient:
 class LocalCoordinator:
     """Coordinates rounds for the local network simulation."""
 
-    def __init__(self, clients: list[LocalClient], results_dir: Path):
+    def __init__(self, clients: list[LocalClient], results_dir: Path, event_sink: Any = None):
         self.clients = clients
         self.results_dir = results_dir
-        self.client_updates_dir = results_dir / "client_updates"
+        self.comms = LocalCommunicationBackend(
+            results_dir=results_dir,
+            expected_clients=len(clients),
+            event_sink=event_sink,
+        )
         self.metrics: list[dict[str, Any]] = []
 
     def prepare_results_dir(self) -> None:
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-        self.client_updates_dir.mkdir(parents=True, exist_ok=True)
+        self.comms.prepare()
 
     def run(self, rounds: int, adapter_shape: tuple[int, int]) -> dict[str, Any]:
         self.prepare_results_dir()
@@ -126,15 +105,18 @@ class LocalCoordinator:
         print("-" * 56)
 
         for round_num in range(1, rounds + 1):
+            self.comms.start_round(round_num, global_weights)
             updates = self.collect_client_updates(global_weights, round_num)
-            global_weights = self.aggregate(round_num, updates)
+            global_weights = self.comms.aggregate(round_num)
+            print(f"Round {round_num}: aggregated global weights with FedAvg")
             round_metrics = self.summarize_round(round_num, updates, global_weights)
             self.metrics.append(round_metrics)
 
-            self.save_round_artifacts(round_num, updates, global_weights)
+            self.comms.publish_global_update(round_num, global_weights, round_metrics)
             self.print_round_summary(round_metrics)
 
-        self.write_metrics()
+        metrics_path = self.comms.write_metrics(self.metrics)
+        print(f"Saved metrics to {metrics_path.relative_to(REPO_ROOT)}")
         return global_weights
 
     def collect_client_updates(
@@ -142,23 +124,13 @@ class LocalCoordinator:
         global_weights: dict[str, Any],
         round_num: int,
     ) -> list[ClientUpdate]:
-        updates = [client.train(global_weights, round_num) for client in self.clients]
+        updates = []
+        for client in self.clients:
+            update = client.train(global_weights, round_num)
+            self.comms.submit_update(update)
+            updates.append(update)
         print(f"Round {round_num}: received {len(updates)} client updates")
         return updates
-
-    def aggregate(
-        self,
-        round_num: int,
-        updates: list[ClientUpdate],
-    ) -> dict[str, Any]:
-        client_weights = [update.weights for update in updates]
-        client_sizes = [update.num_samples for update in updates]
-        global_weights = aggregate_weights(client_weights, client_sizes)
-        if global_weights is None:
-            raise RuntimeError(f"Round {round_num} aggregation failed: no client updates")
-
-        print(f"Round {round_num}: aggregated global weights with FedAvg")
-        return global_weights
 
     def summarize_round(
         self,
@@ -191,29 +163,12 @@ class LocalCoordinator:
             ],
         }
 
-    def save_round_artifacts(
-        self,
-        round_num: int,
-        updates: list[ClientUpdate],
-        global_weights: dict[str, Any],
-    ) -> None:
-        save_artifact(global_weights, self.results_dir / f"global_round_{round_num}.pt")
-
-        for update in updates:
-            filename = f"round_{round_num}_{update.client_id}.pt"
-            save_artifact(update.to_artifact(), self.client_updates_dir / filename)
-
     def print_round_summary(self, metrics: dict[str, Any]) -> None:
         print(
             "Round {round}: loss {avg_loss:.4f}, accuracy {accuracy:.2%}, "
             "epsilon {epsilon_max:.2f}, samples {total_samples}".format(**metrics)
         )
         print("-" * 56)
-
-    def write_metrics(self) -> None:
-        metrics_path = self.results_dir / "metrics.json"
-        metrics_path.write_text(json.dumps(self.metrics, indent=2), encoding="utf-8")
-        print(f"Saved metrics to {metrics_path.relative_to(REPO_ROOT)}")
 
 
 def build_clients(adapter_shape: tuple[int, int]) -> list[LocalClient]:
@@ -262,12 +217,6 @@ def clone_array(value: Any) -> Any:
     return np.array(value, copy=True)
 
 
-def to_cpu(value: Any) -> Any:
-    if torch is not None:
-        return value.cpu()
-    return np.array(value, copy=True)
-
-
 def mean_scalar(value: Any) -> float:
     if torch is not None:
         return float(value.mean().item())
@@ -280,40 +229,26 @@ def vector_norm(value: Any) -> float:
     return float(np.linalg.norm(value))
 
 
-def aggregate_weights(client_weights: list[dict[str, Any]], client_sizes: list[int]) -> dict[str, Any] | None:
-    if torch_fed_avg is not None:
-        return torch_fed_avg(client_weights, client_sizes)
-
-    if not client_weights or not client_sizes:
-        return None
-
-    if len(client_weights) != len(client_sizes):
-        raise ValueError("Number of weight updates must match number of data sizes.")
-
-    total_samples = float(sum(client_sizes))
-    averaged: dict[str, Any] = {}
-    for key in client_weights[0]:
-        weighted_sum = np.zeros_like(client_weights[0][key], dtype=np.float32)
-        for weights, sample_count in zip(client_weights, client_sizes):
-            weighted_sum += weights[key].astype(np.float32) * (sample_count / total_samples)
-        averaged[key] = weighted_sum
-    return averaged
-
-
-def save_artifact(payload: Any, path: Path) -> None:
-    if torch is not None:
-        torch.save(payload, path)
-        return
-
-    with path.open("wb") as artifact_file:
-        pickle.dump(payload, artifact_file)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the local FusionNet MVP simulation")
     parser.add_argument("--rounds", type=int, default=3, help="Number of federated rounds")
     parser.add_argument("--adapter-rows", type=int, default=8, help="Simulated adapter tensor rows")
     parser.add_argument("--adapter-cols", type=int, default=8, help="Simulated adapter tensor columns")
+    parser.add_argument(
+        "--report-backend",
+        action="store_true",
+        help="Forward communication events to the FastAPI backend",
+    )
+    parser.add_argument(
+        "--backend-url",
+        default=os.getenv("BACKEND_URL", "http://localhost:8000"),
+        help="FastAPI backend URL for --report-backend",
+    )
+    parser.add_argument(
+        "--backend-token",
+        default=os.getenv("HF_TOKEN"),
+        help="Bearer token for backend auth; defaults to HF_TOKEN",
+    )
     return parser.parse_args()
 
 
@@ -326,7 +261,17 @@ def main() -> None:
 
     adapter_shape = (args.adapter_rows, args.adapter_cols)
     clients = build_clients(adapter_shape)
-    coordinator = LocalCoordinator(clients, RESULTS_DIR)
+    event_sink = None
+    if args.report_backend:
+        event_sink = HttpEventSink.from_env(
+            total_rounds=args.rounds,
+            base_url=args.backend_url,
+            token=args.backend_token,
+            verbose=True,
+        )
+        print(f"Backend reporting enabled: {args.backend_url}")
+
+    coordinator = LocalCoordinator(clients, RESULTS_DIR, event_sink=event_sink)
     final_weights = coordinator.run(args.rounds, adapter_shape)
 
     final_path = RESULTS_DIR / f"global_round_{args.rounds}.pt"

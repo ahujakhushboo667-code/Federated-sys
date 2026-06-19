@@ -15,6 +15,8 @@ Main files:
 
 - `experiments/mvp_sentiment/run_mvp.py`
 - `experiments/benchmarks/plot_convergence.py`
+- `fusionnet/comms/local_backend.py`
+- `fusionnet/comms/http_event_sink.py`
 - `fusionnet/comms/rccl_backend.py`
 - `fusionnet/core/aggregator.py`
 - optional backend reporting through `backend/routers/rounds.py` and
@@ -48,6 +50,19 @@ python experiments/mvp_sentiment/run_mvp.py
 
 It simulates multiple clients and one coordinator in a single process.
 
+The reusable communication layer lives in
+`fusionnet/comms/local_backend.py`. The demo script uses it as a local
+parameter server:
+
+```python
+comms.start_round(round_num, global_weights)
+comms.submit_update(client_update)
+updates = comms.wait_for_updates(round_num)
+global_weights = comms.aggregate(round_num)
+comms.publish_global_update(round_num, global_weights, round_metrics)
+comms.write_metrics(metrics)
+```
+
 If PyTorch is installed, the simulation uses PyTorch tensors and the existing
 `fusionnet.core.aggregator.fed_avg` implementation. If PyTorch is not installed,
 it falls back to NumPy arrays so the communication protocol can still be tested
@@ -60,6 +75,161 @@ The demo must prove:
 3. The coordinator averages updates using `fusionnet.core.aggregator.fed_avg`.
 4. The global update is saved.
 5. Metrics are saved for plotting and dashboard handoff.
+
+## Backend Event Hooks
+
+The communication backend accepts an optional event sink. This keeps telemetry
+separate from training: if the backend is offline, the coordinator can still run.
+
+The HTTP event sink lives in `fusionnet/comms/http_event_sink.py`.
+
+Run local simulation only:
+
+```bash
+python experiments/mvp_sentiment/run_mvp.py
+```
+
+Run local simulation and attempt backend reporting:
+
+```bash
+python experiments/mvp_sentiment/run_mvp.py --report-backend
+```
+
+Optional backend arguments:
+
+```bash
+python experiments/mvp_sentiment/run_mvp.py \
+  --report-backend \
+  --backend-url http://localhost:8000 \
+  --backend-token "$HF_TOKEN"
+```
+
+All backend calls are best-effort. A failed POST/PATCH is logged in verbose mode
+but does not stop local training, aggregation, metrics, or artifact writing.
+
+For local MVP testing without PostgreSQL, run the backend in in-memory mode:
+
+```bash
+BACKEND_IN_MEMORY=true BACKEND_AUTH_DISABLED=true \
+  python -m uvicorn backend.main:app --reload --port 8000
+```
+
+This mode stores devices, rounds, metrics, events, and global model metadata in
+process memory. It is only for local comms/frontend integration testing. The real
+backend path still uses PostgreSQL.
+
+### Verified MVP Backend Flow
+
+This flow was verified locally with the in-memory backend mode.
+
+Terminal 1: start the FastAPI backend without PostgreSQL:
+
+```bash
+cd /home/atlonglastkibet/Desktop/Federated-sys
+source .venv/bin/activate
+BACKEND_IN_MEMORY=true BACKEND_AUTH_DISABLED=true \
+  python -m uvicorn backend.main:app --reload --port 8000
+```
+
+Terminal 2: run the local federated round and report events to the backend:
+
+```bash
+cd /home/atlonglastkibet/Desktop/Federated-sys
+source .venv/bin/activate
+python experiments/mvp_sentiment/run_mvp.py --rounds 1 --report-backend
+```
+
+Success signal:
+
+```text
+Backend reporting enabled: http://localhost:8000
+Round 1: received 3 client updates
+Round 1: aggregated global weights with FedAvg
+Saved metrics to experiments/mvp_sentiment/results/metrics.json
+Saved final global weights to experiments/mvp_sentiment/results/global_round_1.pt
+```
+
+There should be no `[backend-report] ... failed` lines.
+
+Verify that the backend received the comms events:
+
+```bash
+curl http://localhost:8000/api/rounds/jobs
+curl http://localhost:8000/api/events/activity
+curl http://localhost:8000/api/metrics/loss-curve
+curl http://localhost:8000/api/dashboard/kpi
+```
+
+Expected meaning:
+
+| Endpoint | What it proves |
+|---|---|
+| `/api/rounds/jobs` | backend knows the round completed |
+| `/api/events/activity` | backend received round lifecycle events |
+| `/api/metrics/loss-curve` | backend received training metrics |
+| `/api/dashboard/kpi` | backend can serve dashboard-ready summary data |
+
+This verifies:
+
+```text
+local simulated clients
+  -> LocalCommunicationBackend
+  -> FedAvg
+  -> HttpEventSink
+  -> FastAPI backend route contract
+  -> dashboard-ready API data
+```
+
+This does not verify persistent PostgreSQL storage. PostgreSQL remains a backend
+infrastructure task.
+
+### Backend Boundary
+
+The communication layer should not expose frontend endpoints directly.
+
+Responsibility split:
+
+```text
+comms:
+  coordinates rounds, receives client updates, aggregates weights, emits events
+
+backend:
+  receives comms events, stores state/metrics/events, exposes REST/WebSocket APIs
+
+frontend:
+  consumes backend APIs and WebSocket events
+```
+
+Short version:
+
+```text
+comms tells backend what happened.
+backend records and exposes it.
+frontend displays it.
+```
+
+Local backend events:
+
+| Event | Meaning | Future backend target |
+|---|---|---|
+| `round.started` | coordinator opened round N | `POST /api/rounds` |
+| `client.update_received` | client update arrived | `PATCH /api/rounds/{round}` |
+| `round.aggregated` | FedAvg completed | `POST /api/events` |
+| `global.update_published` | global update saved | `PATCH /api/rounds/{round}` and `POST /api/models/global` |
+| `metrics.written` | local metrics artifact saved | optional dashboard/debug event |
+
+Current HTTP mappings:
+
+| Event | Backend calls |
+|---|---|
+| `round.started` | `POST /api/rounds`, `POST /api/events` |
+| `client.update_received` | `PATCH /api/rounds/{round}`, `POST /api/metrics` |
+| `round.aggregated` | `POST /api/events` |
+| `global.update_published` | `PATCH /api/rounds/{round}`, `POST /api/metrics`, `POST /api/models/global`, `POST /api/events` |
+| `metrics.written` | `POST /api/events` |
+
+The next backend step is not to change the communication protocol. It is to run
+FastAPI locally and verify these event mappings against the database/dashboard.
 
 ## Round Lifecycle
 
