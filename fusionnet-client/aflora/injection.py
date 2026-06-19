@@ -10,7 +10,12 @@ def inject_aflora(model, target_modules, rank, alpha=16):
         # Check if this module matches target modules (e.g. q_proj, v_proj)
         if any(t in name for t in target_modules) and hasattr(module, "weight"):
             aflora_layer = AFLoRALayer(module, rank=rank, alpha=alpha)
-            setattr(model, name, aflora_layer)
+            if isinstance(model, nn.ModuleList):
+                model[int(name)] = aflora_layer
+            elif isinstance(model, nn.ModuleDict):
+                model[name] = aflora_layer
+            else:
+                setattr(model, name, aflora_layer)
             injected_count += 1
         else:
             injected_count += inject_aflora(module, target_modules, rank, alpha)

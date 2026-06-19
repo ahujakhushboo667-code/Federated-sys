@@ -123,11 +123,13 @@ async def get_regions(db: AsyncSession = Depends(get_db)):
         "SA-East": {"x": 30, "y": 60}
     }
     
+    default_coords = {"x": 50, "y": 50}
+    
     return [
         RegionData(
             name=r[0] or "Unknown",
             deviceCount=r[1],
-            x=region_coords.get(r[0], {"x": 50})["x"],
-            y=region_coords.get(r[0], {"y": 50})["y"]
+            x=region_coords.get(r[0], default_coords).get("x", 50),
+            y=region_coords.get(r[0], default_coords).get("y", 50)
         ) for r in regions_count
     ]

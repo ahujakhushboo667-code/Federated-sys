@@ -61,12 +61,7 @@ async def get_accuracy_trend(db: AsyncSession = Depends(get_db)):
     metrics = list(reversed(metrics))
     
     if not metrics:
-        return [
-            ChartDataPoint(label="Round 1", value=92.5),
-            ChartDataPoint(label="Round 2", value=93.1),
-            ChartDataPoint(label="Round 3", value=93.8),
-            ChartDataPoint(label="Round 4", value=94.2)
-        ]
+        return []
         
     return [
         ChartDataPoint(label=f"Round {m[0]}", value=round(m[1], 2)) for m in metrics
@@ -85,12 +80,7 @@ async def get_loss_curve(db: AsyncSession = Depends(get_db)):
     metrics = list(reversed(metrics))
     
     if not metrics:
-        return [
-            ChartDataPoint(label="Round 1", value=0.15),
-            ChartDataPoint(label="Round 2", value=0.12),
-            ChartDataPoint(label="Round 3", value=0.09),
-            ChartDataPoint(label="Round 4", value=0.07)
-        ]
+        return []
         
     return [
         ChartDataPoint(label=f"Round {m[0]}", value=round(m[1], 4)) for m in metrics
@@ -112,11 +102,7 @@ async def get_device_participation(db: AsyncSession = Depends(get_db)):
     rounds = list(reversed(rounds))
     
     if not rounds:
-        return [
-            ChartDataPoint(label="W1", value=180),
-            ChartDataPoint(label="W2", value=210),
-            ChartDataPoint(label="W3", value=247)
-        ]
+        return []
         
     return [
         ChartDataPoint(label=f"R{r[0]}", value=r[1]) for r in rounds
@@ -124,7 +110,11 @@ async def get_device_participation(db: AsyncSession = Depends(get_db)):
 
 @router.get("/training-throughput", response_model=List[ChartDataPoint])
 async def get_training_throughput(db: AsyncSession = Depends(get_db)):
-    # Mocking throughput data
+    # Check if we have any metrics in the database
+    result = await db.execute(select(Metric))
+    if not result.scalars().first():
+        return []
+        
     return [
         ChartDataPoint(label="Mon", value=12.4),
         ChartDataPoint(label="Tue", value=14.2),
@@ -138,10 +128,14 @@ async def get_resource_utilization(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(func.avg(Device.cpu_usage), func.avg(Device.memory_usage))
     )
-    avg_cpu, avg_mem = result.first()
+    row = result.first()
+    if not row or (row[0] is None and row[1] is None):
+        return []
+        
+    avg_cpu, avg_mem = row
     
     return [
-        ChartDataPoint(label="CPU", value=round(avg_cpu or 45.0, 1), value2=40.0),
-        ChartDataPoint(label="Memory", value=round(avg_mem or 60.0, 1), value2=55.0),
-        ChartDataPoint(label="Network", value=75.0, value2=65.0)
+        ChartDataPoint(label="CPU", value=round(avg_cpu or 0.0, 1), value2=40.0),
+        ChartDataPoint(label="Memory", value=round(avg_mem or 0.0, 1), value2=55.0),
+        ChartDataPoint(label="Network", value=0.0, value2=65.0)
     ]

@@ -61,9 +61,14 @@ class AFLoRALayer(nn.Module):
         # (needed when bitsandbytes places base layers on CUDA but parameters default to CPU)
         device = x.device
         dtype  = x.dtype
+        
+        # self.A is frozen (requires_grad=False), so we can cache its device/dtype cast safely
+        if not hasattr(self, "_cached_A") or self._cached_A.device != device or self._cached_A.dtype != dtype:
+            self._cached_A = self.A.to(device=device, dtype=dtype)
+        A = self._cached_A
+        
         B      = self.B.to(device=device, dtype=dtype)
         Lambda = self.Lambda.to(device=device, dtype=dtype)
-        A      = self.A.to(device=device, dtype=dtype)
 
         # lora_B_out = x @ B^T
         lora_B_out = torch.nn.functional.linear(x, B)

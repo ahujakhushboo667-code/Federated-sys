@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Fira_Code } from "next/font/google";
 import { AppShell } from "@/components/layout/app-shell";
+import { WebSocketProvider } from "@/lib/websocket-context";
 import "./globals.css";
 
-const geistSans = Geist({
+const geistSans = Inter({
   variable: "--font-geist-sans",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
+const geistMono = Fira_Code({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
@@ -30,7 +31,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full bg-[#060608] font-sans text-zinc-100">
-        <AppShell>{children}</AppShell>
+        <WebSocketProvider>
+          <AppShell>{children}</AppShell>
+        </WebSocketProvider>
       </body>
     </html>
   );

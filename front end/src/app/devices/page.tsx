@@ -2,15 +2,17 @@
 
 import { motion } from "framer-motion";
 import { Cpu, Plus, Filter } from "lucide-react";
-import { edgeDevices, regionData } from "@/lib/mock-data";
+import { useWebSocket } from "@/lib/websocket-context";
 import { DeviceTable } from "@/components/dashboard/device-table";
 import { GlassCard } from "@/components/shared/glass-card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { StatusIndicator } from "@/components/shared/status-indicator";
+import type { EdgeDevice } from "@/types";
 
 export default function DevicesPage() {
-  const onlineCount = edgeDevices.filter(
+  const { devices, regions } = useWebSocket();
+  const onlineCount = devices.filter(
     (d) => d.status === "online" || d.status === "training"
   ).length;
 
@@ -45,7 +47,7 @@ export default function DevicesPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <GlassCard>
           <div className="p-4">
-            <p className="text-2xl font-bold text-zinc-100">{edgeDevices.length}</p>
+            <p className="text-2xl font-bold text-zinc-100">{devices.length}</p>
             <p className="text-sm text-zinc-500">Total Devices</p>
           </div>
         </GlassCard>
@@ -58,7 +60,7 @@ export default function DevicesPage() {
         <GlassCard delay={0.1}>
           <div className="p-4">
             <p className="text-2xl font-bold text-cyan-400">
-              {regionData.length}
+              {regions.length}
             </p>
             <p className="text-sm text-zinc-500">Active Regions</p>
           </div>
@@ -74,7 +76,7 @@ export default function DevicesPage() {
       <DeviceTable />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {edgeDevices.slice(0, 3).map((device, i) => (
+        {devices.slice(0, 3).map((device: EdgeDevice, i: number) => (
           <GlassCard key={device.id} delay={i * 0.05}>
             <div className="p-5">
               <div className="flex items-center justify-between">

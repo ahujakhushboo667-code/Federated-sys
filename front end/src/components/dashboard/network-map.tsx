@@ -2,9 +2,10 @@
 
 import { motion } from "framer-motion";
 import { Globe2, Radio } from "lucide-react";
-import { regionData } from "@/lib/mock-data";
+import { useWebSocket } from "@/lib/websocket-context";
 import { GlassCard } from "@/components/shared/glass-card";
 import { SectionHeader } from "@/components/shared/section-header";
+import type { RegionData } from "@/types";
 
 const hubX = 50;
 const hubY = 44;
@@ -19,18 +20,21 @@ const continents = [
 ];
 
 export function NetworkMap() {
+  const { devices, regions } = useWebSocket();
+  const onlineCount = devices.filter((d) => d.status === "online" || d.status === "training").length;
+
   return (
     <GlassCard delay={0.1} glow="cyan">
       <div className="p-7 lg:p-8">
         <SectionHeader
           eyebrow="Global Infrastructure"
           title="Network Overview"
-          description="Real-time federated node topology across 5 regions"
+          description="Real-time federated node topology across active regions"
           action={
             <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
               <Radio className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
               <span className="text-xs font-semibold text-emerald-400">
-                247 devices live
+                {onlineCount} devices live
               </span>
             </div>
           }
@@ -106,7 +110,7 @@ export function NetworkMap() {
             ))}
 
             {/* Inter-region mesh connections */}
-            {regionData.map((region, i) => {
+            {regions.map((region: RegionData, i: number) => {
               const midX = (hubX + region.x) / 2;
               const midY = (hubY + region.y) / 2 - 8;
               return (
@@ -136,7 +140,7 @@ export function NetworkMap() {
             })}
 
             {/* Data packets traveling along arcs */}
-            {regionData.map((region, i) => {
+            {regions.map((region: RegionData, i: number) => {
               const midX = (hubX + region.x) / 2;
               const midY = (hubY + region.y) / 2 - 8;
               const pathD = `M ${hubX} ${hubY} Q ${midX} ${midY} ${region.x} ${region.y}`;
@@ -204,7 +208,7 @@ export function NetworkMap() {
             />
 
             {/* Region nodes */}
-            {regionData.map((region, i) => (
+            {regions.map((region: RegionData, i: number) => (
               <g key={region.name}>
                 <motion.circle
                   cx={region.x}
@@ -250,7 +254,7 @@ export function NetworkMap() {
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {regionData.map((region, i) => (
+          {regions.map((region: RegionData, i: number) => (
             <motion.div
               key={region.name}
               initial={{ opacity: 0, y: 8 }}
