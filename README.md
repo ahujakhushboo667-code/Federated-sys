@@ -702,7 +702,17 @@ During development and live testing, several issues were identified and resolved
 9. **Global Exception Handling (`backend/main.py`)**:
    - Implemented a global exception handler to prevent the backend API from crashing on unhandled errors.
 10. **Dynamic Repository Configuration (`fusionnet-client/config.yaml`, `scripts/hf_coordinator.py`)**:
-   - Replaced hardcoded Hugging Face repository IDs with environment variables to improve security and deployment flexibility.
+    - Replaced hardcoded Hugging Face repository IDs with environment variables to improve security and deployment flexibility.
+11. **Frontend Framework Compatibility Downgrade**:
+    - Downgraded Next.js from experimental version `16.2.9` to stable `^14.2.4` and React to `^18.2.0` to eliminate runtime instability. Included Next.js 14-supported `Inter` and `Fira Code` Google fonts inside `front end/src/app/layout.tsx`.
+12. **Unified WebSocket Context Provider (`front end/src/lib/websocket-context.tsx`)**:
+    - Replaced component-specific WebSocket client connections with a unified `useWebSocket` Context that establishes a single, shared connection to `/ws/all` on the backend, handling auto-reconnection and client registry events.
+13. **WebSocket Heartbeat & Safety Limits (`backend/websocket/manager.py`, `backend/routers/ws.py`)**:
+    - Implemented a 100-connection limit check and updated message broadcasting to use `asyncio.gather` for true concurrency. Added a 30-second ping/pong validation loop that terminates idle, stale connections.
+14. **Enforced Registration Enum & Fallbacks (`backend/routers/devices.py`)**:
+    - Enforced strict registration validation for `hardware_type` using a Pydantic `HardwareType` Enum and implemented a coordinates fallback to `(50, 50)` for custom or unknown regions.
+15. **AFLoRA Device Caching & nn.ModuleList Support**:
+    - Cached the device/dtype cast of frozen parameters (like `self.A`) inside `AFLoRALayer` to remove redundant casting overhead on forward passes. Enhanced `inject_aflora` to properly replace child elements inside `nn.ModuleList` and `nn.ModuleDict` via key/index assignment instead of `setattr`.
 
 ---
 

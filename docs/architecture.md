@@ -157,6 +157,13 @@ FusionNet runs a centralized **FastAPI backend** tracking live metrics, which po
 2. **Fire-and-Forget Architecture**: Client integrations with the backend are fully asynchronous. If the backend server is down, local federated training continues uninterrupted (robust edge fault tolerance).
 3. **Authentication**: Handled via `HFAuthMiddleware` by validating bearer tokens against the Hugging Face identity APIs.
 
+### Hardening & WebSockets Optimization
+- **Unified WebSocket Context**: The frontend dashboard initiates a single connection to the `/ws/all` backend channel via a custom React `useWebSocket` Provider, minimizing network resource footprint. It manages auto-reconnection and parses `device.registered` and `device.heartbeat` events.
+- **Max Sockets Rate-Limiting**: The backend connection manager restricts total active WebSocket connections to a maximum of 100 concurrent sockets to prevent server thread depletion.
+- **Concurrent Broadcasts**: Sockets broadcast concurrently using Python's native `asyncio.gather` for optimal packet delivery speed.
+- **Keep-Alive Heartbeats**: The server establishes a 30-second ping/pong validation loop on each websocket connection. Stale connections are forcefully disconnected if they do not communicate within 30 seconds.
+- **Registration Input Validation**: Added strict `HardwareType` Enum validation (`MI300X`, `RX_7900_XTX`, `Steam_Deck`, `CPU_only`, plus marketing representations) on backend device registration and set default coordinates to `(50, 50)` for unrecognized client regions.
+
 ---
 
 ## Privacy Layer
@@ -167,3 +174,11 @@ FusionNet implements DP-SGD with a dual-engine approach:
 2. **Fallback**: Custom `CustomPrivacyEngine` — same interface, used when Opacus hooks fail on dynamically quantized 4-bit modules (common on ROCm backends). Calls `clip → noise → step → zero_grad` in sequence.
 
 Both engines guarantee (ε, δ)-differential privacy with `ε ≤ 1.0` and `δ ≤ 1e-5` as default targets.
+
+---
+
+## AFLoRA Client Performance Optimization
+
+To resolve client-side federated learning bottlenecks on hardware:
+1. **Casting Caching**: Since the global `self.A` parameter is frozen during training (`requires_grad=False`), its device/dtype casting (`.to(device, dtype)`) is cached dynamically on the forward pass, avoiding redundant and costly conversions during training loops.
+2. **ModuleList Recursion**: Injected adapters now correctly target and replace linear layers within PyTorch `nn.ModuleList` and `nn.ModuleDict` modules by executing key/index-based assignments (`model[int(name)] = aflora_layer`) instead of `setattr`.
