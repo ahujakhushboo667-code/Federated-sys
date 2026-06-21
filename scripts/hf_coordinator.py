@@ -263,12 +263,31 @@ if __name__ == "__main__":
     parser.add_argument("--rounds",       type=int, default=1)
     parser.add_argument("--timeout",      type=int, default=1800,
                         help="Max seconds to wait for client uploads per round (default: 1800 = 30 min)")
+    parser.add_argument("--port",         type=int, default=8000,
+                        help="Backend server port to advertise via mDNS (default: 8000)")
+    parser.add_argument("--no-advertise", action="store_true",
+                        help="Disable mDNS LAN advertisement")
     args = parser.parse_args()
 
-    coordinator = HFCoordinator(
-        args.repo_id, args.num_clients,
-        timeout_seconds=args.timeout,
-        min_clients=args.min_clients,
-    )
-    for r in range(1, args.rounds + 1):
-        coordinator.aggregate_round(r)
+    # ── Advertise coordinator on LAN via mDNS ─────────────────────────────────
+    mdns_reg = None
+    if not args.no_advertise:
+        try:
+            sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fusionnet-client")))
+            from discovery import advertise_coordinator
+            mdns_reg = advertise_coordinator(port=args.port)
+            logger.info(f"LAN advertisement active — clients on the same network will auto-discover this coordinator.")
+        except Exception as e:
+            logger.warning(f"mDNS advertisement failed (clients will need --backend-url): {e}")
+
+    try:
+        coordinator = HFCoordinator(
+            args.repo_id, args.num_clients,
+            timeout_seconds=args.timeout,
+            min_clients=args.min_clients,
+        )
+        for r in range(1, args.rounds + 1):
+            coordinator.aggregate_round(r)
+    finally:
+        if mdns_reg:
+            mdns_reg.stop()
